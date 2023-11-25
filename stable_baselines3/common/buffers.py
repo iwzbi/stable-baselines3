@@ -12,6 +12,7 @@ from stable_baselines3.common.type_aliases import (
     DictRolloutBufferSamples,
     ReplayBufferSamples,
     RolloutBufferSamples,
+    RolloutCostBufferSamples,
 )
 from stable_baselines3.common.utils import get_device
 from stable_baselines3.common.vec_env import VecNormalize
@@ -484,6 +485,110 @@ class RolloutBuffer(BaseBuffer):
             self.returns[batch_inds].flatten(),
         )
         return RolloutBufferSamples(*tuple(map(self.to_torch, data)))
+
+
+class RolloutCostBuffer(RolloutBuffer):
+    def __init__(
+        self,
+        buffer_size: int,
+        observation_space: spaces.Space,
+        action_space: spaces.Space,
+        device: Union[th.device, str] = "auto",
+        gae_lambda: float = 1,
+        gamma: float = 0.99,
+        n_envs: int = 1,
+    ):
+        super().__init__(buffer_size, observation_space, action_space, device, gae_lambda, gamma, n_envs)
+
+    def reset(self) -> None:
+        super().reset()
+        self.costs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.values_costs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.adv_costs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.returns_costs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+
+    def compute_returns_and_advantage(self, last_values: th.Tensor, last_values_costs: th.Tensor, dones: np.ndarray) -> None:
+        super().compute_returns_and_advantage(last_values, dones)
+        # Convert to numpy
+        last_values_costs = last_values_costs.clone().cpu().numpy().flatten()
+
+        last_gae_lam = 0
+        for step in reversed(range(self.buffer_size)):
+            if step == self.buffer_size - 1:
+                next_non_terminal = 1.0 - dones
+                next_values_costs = last_values_costs
+            else:
+                next_non_terminal = 1.0 - self.episode_starts[step + 1]
+                next_values_costs = self.values_costs[step + 1]
+            delta = self.costs[step] + self.gamma * next_values_costs * next_non_terminal - self.values_costs[step]
+            last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
+            self.adv_costs[step] = last_gae_lam
+        # TD(lambda) estimator, see Github PR #375 or "Telescoping in TD(lambda)"
+        # in David Silver Lecture 4: https://www.youtube.com/watch?v=PnHCvfgC_ZA
+        self.returns_costs = self.adv_costs + self.values_costs
+
+    def add(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+        reward: np.ndarray,
+        cost: np.ndarray,
+        episode_start: np.ndarray,
+        value: th.Tensor,
+        value_cost: th.Tensor,
+        log_prob: th.Tensor,
+    ) -> None:
+        self.costs[self.pos] = np.array(cost)
+        self.values_costs[self.pos] = value_cost.clone().cpu().numpy().flatten()
+        super().add(obs, action, reward, episode_start, value, log_prob)
+
+    def get(self, batch_size: int | None = None) -> Generator[RolloutBufferSamples, None, None]:
+        assert self.full, ""
+        indices = np.random.permutation(self.buffer_size * self.n_envs)
+        # Prepare the data
+        if not self.generator_ready:
+            _tensor_names = [
+                "observations",
+                "actions",
+                "values",
+                "values_costs",
+                "log_probs",
+                "advantages",
+                "adv_costs",
+                "returns",
+                "returns_costs",
+            ]
+
+            for tensor in _tensor_names:
+                self.__dict__[tensor] = self.swap_and_flatten(self.__dict__[tensor])
+            self.generator_ready = True
+
+        # Return everything, don't create minibatches
+        if batch_size is None:
+            batch_size = self.buffer_size * self.n_envs
+
+        start_idx = 0
+        while start_idx < self.buffer_size * self.n_envs:
+            yield self._get_samples(indices[start_idx : start_idx + batch_size])
+            start_idx += batch_size
+
+    def _get_samples(
+        self,
+        batch_inds: np.ndarray,
+        env: Optional[VecNormalize] = None,
+    ) -> RolloutBufferSamples:
+        data = (
+            self.observations[batch_inds],
+            self.actions[batch_inds],
+            self.values[batch_inds].flatten(),
+            self.values_costs[batch_inds].flatten(),
+            self.log_probs[batch_inds].flatten(),
+            self.advantages[batch_inds].flatten(),
+            self.adv_costs[batch_inds].flatten(),
+            self.returns[batch_inds].flatten(),
+            self.returns_costs[batch_inds].flatten(),
+        )
+        return RolloutCostBufferSamples(*tuple(map(self.to_torch, data)))
 
 
 class DictReplayBuffer(ReplayBuffer):
