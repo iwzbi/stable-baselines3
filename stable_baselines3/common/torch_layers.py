@@ -278,6 +278,40 @@ class CombinedExtractor(BaseFeaturesExtractor):
         return th.cat(encoded_tensor_list, dim=1)
 
 
+class MLPCostExtractor(MlpExtractor):
+    def __init__(
+        self,
+        feature_dim: int,
+        net_arch: List[int] | Dict[str, List[int]],
+        activation_fn: type[nn.Module],
+        device: th.device | str = "auto",
+    ) -> None:
+        super().__init__(feature_dim, net_arch, activation_fn, device)
+        cost_net: List[nn.Module] = []
+        last_layer_dim_cf = feature_dim
+        if isinstance(net_arch, dict):
+            # Note: if key is not specificed, assume linear network
+            cf_layers_dims = net_arch.get("cf", [])  # Layer sizes of the cost network
+        else:
+            cf_layers_dims = net_arch
+        for curr_layer_dim in cf_layers_dims:
+            cost_net.append(nn.Linear(last_layer_dim_cf, curr_layer_dim))
+            cost_net.append(activation_fn())
+            last_layer_dim_cf = curr_layer_dim
+        # Save dim, used to create the distributions
+        self.latent_dim_cf = last_layer_dim_cf
+        # Create networks
+        # If the list of layers is empty, the network will just act as an Identity module
+        self.cost_net = nn.Sequential(*cost_net).to(device)
+
+    def forward(self, features: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+        fw_actor, fw_critic = super().forward(features)
+        return fw_actor, fw_critic, self.forward_cost(features)
+
+    def forward_cost(self, features: th.Tensor) -> th.Tensor:
+        return self.cost_net(features)
+
+
 def get_actor_critic_arch(net_arch: Union[List[int], Dict[str, List[int]]]) -> Tuple[List[int], List[int]]:
     """
     Get the actor and critic network architectures for off-policy actor-critic algorithms (SAC, TD3, DDPG).

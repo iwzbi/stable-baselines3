@@ -983,3 +983,91 @@ class ContinuousCritic(BaseModel):
         with th.no_grad():
             features = self.extract_features(obs, self.features_extractor)
         return self.q_networks[0](th.cat([features, actions], dim=1))
+
+
+class ActorCriticCostPolicy(ActorCriticPolicy):
+    def __init__(
+        self,
+        observation_space: spaces.Space,
+        action_space: spaces.Space,
+        lr_schedule: Schedule,
+        net_arch: List[int] | Dict[str, List[int]] | None = None,
+        activation_fn: type[nn.Module] = nn.Tanh,
+        ortho_init: bool = True,
+        use_sde: bool = False,
+        log_std_init: float = 0,
+        full_std: bool = True,
+        use_expln: bool = False,
+        squash_output: bool = False,
+        features_extractor_class: type[BaseFeaturesExtractor] = FlattenExtractor,
+        features_extractor_kwargs: Dict[str, Any] | None = None,
+        share_features_extractor: bool = True,
+        normalize_images: bool = True,
+        optimizer_class: type[th.optim.Optimizer] = th.optim.Adam,
+        optimizer_kwargs: Dict[str, Any] | None = None,
+    ):
+        assert share_features_extractor, "only support sharing features extractor"
+        super().__init__(
+            observation_space,
+            action_space,
+            lr_schedule,
+            net_arch,
+            activation_fn,
+            ortho_init,
+            use_sde,
+            log_std_init,
+            full_std,
+            use_expln,
+            squash_output,
+            features_extractor_class,
+            features_extractor_kwargs,
+            share_features_extractor,
+            normalize_images,
+            optimizer_class,
+            optimizer_kwargs,
+        )
+        self.cf_features_extractor = self.features_extractor
+
+    def _build(self, lr_schedule: Schedule) -> None:
+        super()._build()
+        self.cost_net = nn.Linear(self.mlp_extractor.latent_dim_cf, 1)
+        self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)  # type: ignore[call-arg]
+
+    def _build_mlp_extractor(self) -> None:
+        from stable_baselines3.common.torch_layers import MLPCostExtractor
+
+        self.mlp_extractor = MLPCostExtractor(
+            self.features_dim,
+            net_arch=self.net_arch,
+            activation_fn=self.activation_fn,
+            device=self.device,
+        )
+
+    def forward(self, obs: th.Tensor, deterministic: bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
+        features = self.extract_features(obs)
+        if self.share_features_extractor:
+            latent_pi, latent_vf, latent_cf = self.mlp_extractor(features)
+        values = self.value_net(latent_vf)
+        costs = self.value_net(latent_cf)
+        distribution = self._get_action_dist_from_latent(latent_pi)
+        actions = distribution.get_actions(deterministic=deterministic)
+        log_prob = distribution.log_prob(actions)
+        actions = actions.reshape((-1, *self.action_space.shape))  # type: ignore[misc]
+        return actions, values, costs, log_prob
+
+    def evaluate_actions(
+        self, obs: PyTorchObs, actions: th.Tensor
+    ) -> Tuple[th.Tensor, th.Tensor, th.Tensor, Optional[th.Tensor]]:
+        features = self.extract_features(obs)
+        latent_pi, latent_vf, latent_cf = self.mlp_extractor(features)
+        distribution = self._get_action_dist_from_latent(latent_pi)
+        log_prob = distribution.log_prob(actions)
+        values = self.value_net(latent_vf)
+        costs = self.value_net(latent_cf)
+        entropy = distribution.entropy()
+        return values, costs, log_prob, entropy
+
+    def predict_costs(self, obs: PyTorchObs) -> th.Tensor:
+        features = super().extract_features(obs, self.cf_features_extractor)
+        latent_cf = self.mlp_extractor.forward_cost(features)
+        return self.cost_net(latent_cf)
