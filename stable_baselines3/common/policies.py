@@ -1007,7 +1007,7 @@ class ActorCriticCostPolicy(ActorCriticPolicy):
         if self.share_features_extractor:
             latent_pi, latent_vf, latent_cf = self.mlp_extractor(features)
         values = self.value_net(latent_vf)
-        costs = self.value_net(latent_cf)
+        costs = self.cost_net(latent_cf)
         distribution = self._get_action_dist_from_latent(latent_pi)
         actions = distribution.get_actions(deterministic=deterministic)
         log_prob = distribution.log_prob(actions)
@@ -1022,7 +1022,7 @@ class ActorCriticCostPolicy(ActorCriticPolicy):
         distribution = self._get_action_dist_from_latent(latent_pi)
         log_prob = distribution.log_prob(actions)
         values = self.value_net(latent_vf)
-        costs = self.value_net(latent_cf)
+        costs = self.cost_net(latent_cf)
         entropy = distribution.entropy()
         return values, costs, log_prob, entropy
 
