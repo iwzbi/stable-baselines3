@@ -533,6 +533,7 @@ class RolloutCostBuffer(RolloutBuffer):
         n_envs: int = 1,
     ):
         super().__init__(buffer_size, observation_space, action_space, device, gae_lambda, gamma, n_envs)
+        self._ep_costs = []
 
     def reset(self) -> None:
         super().reset()
@@ -576,7 +577,7 @@ class RolloutCostBuffer(RolloutBuffer):
         self.values_costs[self.pos] = value_cost.clone().cpu().numpy().flatten()
         super().add(obs, action, reward, episode_start, value, log_prob)
 
-    def get(self, batch_size: int | None = None) -> Generator[RolloutBufferSamples, None, None]:
+    def get(self, batch_size: int | None = None) -> Generator[RolloutCostBufferSamples, None, None]:
         assert self.full, ""
         indices = np.random.permutation(self.buffer_size * self.n_envs)
         # Prepare the data
@@ -610,7 +611,7 @@ class RolloutCostBuffer(RolloutBuffer):
         self,
         batch_inds: np.ndarray,
         env: Optional[VecNormalize] = None,
-    ) -> RolloutBufferSamples:
+    ) -> RolloutCostBufferSamples:
         data = (
             self.observations[batch_inds],
             self.actions[batch_inds],
