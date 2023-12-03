@@ -11,7 +11,7 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.lagrange import Lagrange
 from stable_baselines3.common.vec_env import VecEnv
 from stable_baselines3.common.utils import obs_as_tensor, safe_mean, explained_variance, get_schedule_fn
-from ppo import PPO
+from stable_baselines3.ppo import PPO
 
 SelfPPOLAG = TypeVar("SelfPPOLAG", bound="PPOLag")
 
@@ -39,8 +39,6 @@ class PPOLag(PPO):
         max_grad_norm: float = 0.5,
         use_sde: bool = False,
         sde_sample_freq: int = -1,
-        rollout_buffer_class: type[RolloutCostBuffer] | None = None,
-        rollout_buffer_kwargs: Dict[str, Any] | None = None,
         target_kl: float | None = None,
         stats_window_size: int = 100,
         tensorboard_log: str | None = None,
@@ -50,7 +48,7 @@ class PPOLag(PPO):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
     ):
-        assert type(policy) is ActorCriticCostPolicy, "only support ActorCriticCostPolicy"
+        assert issubclass(policy, ActorCriticCostPolicy), "Only support ActorCriticCostPolicy or its subclasses."
         super().__init__(
             policy,
             env,
@@ -68,8 +66,6 @@ class PPOLag(PPO):
             max_grad_norm,
             use_sde,
             sde_sample_freq,
-            rollout_buffer_class,
-            rollout_buffer_kwargs,
             target_kl,
             stats_window_size,
             tensorboard_log,
@@ -84,6 +80,18 @@ class PPOLag(PPO):
     def _setup_model(self) -> None:
         super()._setup_model()
         self._lagrange: Lagrange = Lagrange(**self.lagrange_cfgs)
+
+        buffer_cls = RolloutCostBuffer
+
+        self.rollout_buffer = buffer_cls(
+            self.n_steps,
+            self.observation_space,
+            self.action_space,
+            device=self.device,
+            gamma=self.gamma,
+            gae_lambda=self.gae_lambda,
+            n_envs=self.n_envs,
+        )
 
     def train(self) -> None:
         """

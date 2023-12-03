@@ -988,7 +988,7 @@ class ActorCriticCostPolicy(ActorCriticPolicy):
         self.cf_features_extractor = self.features_extractor
 
     def _build(self, lr_schedule: Schedule) -> None:
-        super()._build()
+        super()._build(lr_schedule)
         self.cost_net = nn.Linear(self.mlp_extractor.latent_dim_cf, 1)
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)  # type: ignore[call-arg]
 
@@ -1015,7 +1015,7 @@ class ActorCriticCostPolicy(ActorCriticPolicy):
         return actions, values, costs, log_prob
 
     def evaluate_actions(
-        self, obs: PyTorchObs, actions: th.Tensor
+        self, obs: th.Tensor, actions: th.Tensor
     ) -> Tuple[th.Tensor, th.Tensor, th.Tensor, Optional[th.Tensor]]:
         features = self.extract_features(obs)
         latent_pi, latent_vf, latent_cf = self.mlp_extractor(features)
@@ -1026,7 +1026,7 @@ class ActorCriticCostPolicy(ActorCriticPolicy):
         entropy = distribution.entropy()
         return values, costs, log_prob, entropy
 
-    def predict_costs(self, obs: PyTorchObs) -> th.Tensor:
-        features = super().extract_features(obs, self.cf_features_extractor)
+    def predict_costs(self, obs: th.Tensor) -> th.Tensor:
+        features = super(ActorCriticPolicy, self).extract_features(obs, self.cf_features_extractor)
         latent_cf = self.mlp_extractor.forward_cost(features)
         return self.cost_net(latent_cf)
