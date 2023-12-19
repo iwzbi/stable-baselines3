@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 import torch as th
 from torch.nn import functional as F
 import numpy as np
-from gymnasium import spaces
+from gym import spaces
 
 from stable_baselines3.common.buffers import RolloutCostBuffer
 from stable_baselines3.common.policies import ActorCriticCostPolicy
@@ -24,7 +24,12 @@ class PPOLag(PPO):
         self,
         policy: type[ActorCriticCostPolicy],
         env: GymEnv | str,
-        lagrange_cfgs: dict,
+        lagrange_cfgs: dict = {
+            "cost_limit": 5.0,
+            "lagrangian_multiplier_init": 0.001,
+            "lambda_lr": 0.035,
+            "lambda_optimizer": "Adam",
+        },
         learning_rate: float | Schedule = 0.0003,
         n_steps: int = 2048,
         batch_size: int = 64,
@@ -76,10 +81,10 @@ class PPOLag(PPO):
             _init_setup_model,
         )
         self.lagrange_cfgs = lagrange_cfgs
+        self._lagrange: Lagrange = Lagrange(**self.lagrange_cfgs)
 
     def _setup_model(self) -> None:
         super()._setup_model()
-        self._lagrange: Lagrange = Lagrange(**self.lagrange_cfgs)
 
         buffer_cls = RolloutCostBuffer
 
@@ -124,7 +129,7 @@ class PPOLag(PPO):
                 if isinstance(self.action_space, spaces.Discrete):
                     # Convert discrete action from float to long
                     actions = rollout_data.actions.long().flatten()
-
+                actions = rollout_data.actions.long().flatten()
                 # Re-sample the noise matrix because the log_std has changed
                 if self.use_sde:
                     self.policy.reset_noise(self.batch_size)
@@ -144,7 +149,7 @@ class PPOLag(PPO):
 
                 # ratio between old and new policy, should be one at the first iteration
                 ratio = th.exp(log_prob - rollout_data.old_log_prob)
-
+                # print(log_prob.shape, rollout_data.old_log_prob.shape, ratio.shape)
                 # clipped surrogate loss
                 penalty = self._lagrange.lagrangian_multiplier.item()
                 adv = (advantages - penalty * adv_cost) / (1 + penalty)
@@ -183,7 +188,7 @@ class PPOLag(PPO):
 
                 entropy_losses.append(entropy_loss.item())
 
-                loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss
+                loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss + cost_loss
 
                 # Calculate approximate form of reverse KL Divergence for early stopping
                 # see issue #417: https://github.com/DLR-RM/stable-baselines3/issues/417

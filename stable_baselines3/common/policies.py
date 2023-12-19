@@ -990,6 +990,8 @@ class ActorCriticCostPolicy(ActorCriticPolicy):
     def _build(self, lr_schedule: Schedule) -> None:
         super()._build(lr_schedule)
         self.cost_net = nn.Linear(self.mlp_extractor.latent_dim_cf, 1)
+        if self.ortho_init:
+            self.cost_net.apply(partial(self.init_weights, gain=1))
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)  # type: ignore[call-arg]
 
     def _build_mlp_extractor(self) -> None:
@@ -1006,6 +1008,8 @@ class ActorCriticCostPolicy(ActorCriticPolicy):
         features = self.extract_features(obs)
         if self.share_features_extractor:
             latent_pi, latent_vf, latent_cf = self.mlp_extractor(features)
+        else:
+            raise NotImplementedError
         values = self.value_net(latent_vf)
         costs = self.cost_net(latent_cf)
         distribution = self._get_action_dist_from_latent(latent_pi)
