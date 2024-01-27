@@ -116,14 +116,18 @@ class PPOLag(PPO):
         pg_losses, value_losses, cost_losses = [], [], []
         clip_fractions = []
 
+        Jc: th.Tensor = sum(self._epcost) / len(self._epcost)
+        self._lagrange.update_lagrange_multiplier(Jc.item())
+
         continue_training = True
         # train for n_epochs epochs
         for epoch in range(self.n_epochs):
             approx_kl_divs = []
+
             # Do a complete pass on the rollout buffer
             for rollout_data in self.rollout_buffer.get(self.batch_size):
-                Jc: th.Tensor = sum(self._epcost) / len(self._epcost)
-                self._lagrange.update_lagrange_multiplier(Jc.item())
+                # Jc: th.Tensor = sum(self._epcost) / len(self._epcost)
+                # self._lagrange.update_lagrange_multiplier(Jc.item())
 
                 actions = rollout_data.actions
                 if isinstance(self.action_space, spaces.Discrete):
@@ -219,6 +223,8 @@ class PPOLag(PPO):
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
 
         # Logs
+        Jc: th.Tensor = sum(self._epcost) / len(self._epcost)
+        self.logger.record("train/avg_ep_cost", Jc.item())
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
@@ -246,6 +252,9 @@ class PPOLag(PPO):
 
         n_steps = 0
         rollout_buffer.reset()
+
+        self._epcost = []
+
         # Sample new weights for the state dependent exploration
         if self.use_sde:
             self.policy.reset_noise(env.num_envs)

@@ -524,11 +524,13 @@ class EvalCallback(EventCallback):
 
 
 class EvalCMDPCallback(EvalCallback):
-    def __init__(self, **kwargs):
+    def __init__(self, cost_limit, **kwargs):
         super().__init__(**kwargs)
         self.evaluations_costs = []
         self.best_mean_cost = -np.inf
         self.last_mean_cost = -np.inf
+        self.best_safe_reward = -np.inf
+        self.cost_limit = cost_limit
 
     def _on_step(self) -> bool:
         continue_training = True
@@ -587,11 +589,11 @@ class EvalCMDPCallback(EvalCallback):
             self.last_mean_cost = mean_cost
 
             if self.verbose >= 1:
-                print(
+                self.logger.info(
                     f"Eval num_timesteps={self.num_timesteps}, " f"episode_reward={mean_reward:.2f} +/- {std_reward:.2f}, ",
                     f"episode_cost={mean_cost:.2f} +/- {std_cost:.2f}",
                 )
-                print(f"Episode length: {mean_ep_length:.2f} +/- {std_ep_length:.2f}")
+                self.logger.info(f"Episode length: {mean_ep_length:.2f} +/- {std_ep_length:.2f}")
             # Add to current Logger
             self.logger.record("eval/mean_reward", float(mean_reward))
             self.logger.record("eval/mean_cost", float(mean_cost))
@@ -609,13 +611,20 @@ class EvalCMDPCallback(EvalCallback):
 
             if mean_reward > self.best_mean_reward:
                 if self.verbose >= 1:
-                    print("New best mean reward!")
+                    self.logger.info("New best mean reward!")
                 if self.best_model_save_path is not None:
                     self.model.save(os.path.join(self.best_model_save_path, "best_model"))
                 self.best_mean_reward = mean_reward
                 # Trigger callback on new best model, if needed
                 if self.callback_on_new_best is not None:
                     continue_training = self.callback_on_new_best.on_step()
+
+            if mean_cost <= self.cost_limit and mean_reward > self.best_safe_reward:
+                if self.verbose >= 1:
+                    self.logger.info("New best safe reward!")
+                if self.best_model_save_path is not None:
+                    self.model.save(os.path.join(self.best_model_save_path, "best_safe_model"))
+                self.best_safe_reward = mean_reward
 
             # Trigger callback after every evaluation, if needed
             if self.callback is not None:

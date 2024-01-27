@@ -70,12 +70,14 @@ class Lagrange:
         lagrangian_multiplier_init: float,
         lambda_lr: float,
         lambda_optimizer: str,
+        lagrangian_lower_bound: float = 0.0,
         lagrangian_upper_bound: float | None = None,
     ) -> None:
         """Initialize an instance of :class:`Lagrange`."""
         self.cost_limit: float = cost_limit
         self.lambda_lr: float = lambda_lr
         self.lagrangian_upper_bound: float | None = lagrangian_upper_bound
+        self.lagrangian_lower_bound: float = lagrangian_lower_bound
 
         init_value = max(lagrangian_multiplier_init, 0.0)
         self.lagrangian_multiplier: torch.nn.Parameter = torch.nn.Parameter(
@@ -131,6 +133,6 @@ class Lagrange:
         lambda_loss.backward()
         self.lambda_optimizer.step()
         self.lagrangian_multiplier.data.clamp_(
-            0.0,
+            self.lagrangian_lower_bound,
             self.lagrangian_upper_bound,
         )  # enforce: lambda in [0, inf]
